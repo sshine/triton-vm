@@ -53,11 +53,14 @@ impl PermArg {
     }
 
     pub fn quotient_degree_bound(&self, ext_codeword_tables: &ExtTableCollection) -> Degree {
-        let lhs_interpolant_degree = ext_codeword_tables.interpolant_degree(self.from_table);
-        let rhs_interpolant_degree = ext_codeword_tables.interpolant_degree(self.to_table);
-        let degree = std::cmp::max(lhs_interpolant_degree, rhs_interpolant_degree);
+        ext_codeword_tables.interpolant_degree() - 1
 
-        degree - 1
+        // todo: check if this is correct. delete before committing if so. (no one will ever see this msg)
+        // let lhs_interpolant_degree = ext_codeword_tables.interpolant_degree();
+        // let rhs_interpolant_degree = ext_codeword_tables.interpolant_degree();
+        // let degree = std::cmp::max(lhs_interpolant_degree, rhs_interpolant_degree);
+        //
+        // degree - 1
     }
 
     pub fn evaluate_difference(&self, points: &[Vec<XFieldElement>]) -> XFieldElement {

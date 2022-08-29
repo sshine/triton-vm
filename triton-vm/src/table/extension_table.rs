@@ -21,8 +21,11 @@ type XWord = XFieldElement;
 
 pub trait ExtensionTable: BaseTableTrait<XWord> + Sync {
     /// Compute the degrees of the quotients from all AIR constraints that apply to the table.
-    fn all_degrees_with_origin(&self) -> Vec<DegreeWithOrigin> {
-        let interpolant_degree = self.interpolant_degree();
+    fn all_degrees_with_origin(
+        &self,
+        shared_padded_height: usize,
+        interpolant_degree: Degree,
+    ) -> Vec<DegreeWithOrigin> {
         let interpolants_degrees = vec![interpolant_degree; self.full_width()];
         let duplicated_interpolants_degrees = vec![interpolant_degree; self.full_width() * 2];
 
@@ -43,7 +46,7 @@ pub trait ExtensionTable: BaseTableTrait<XWord> + Sync {
                     origin_table_name: self.name(),
                     origin_index: i,
                     origin_air_degree: air.degree(),
-                    origin_table_height: self.padded_height(),
+                    origin_table_height: shared_padded_height,
                     origin_constraint_type: "boundary constraint".to_string(),
                 }
             })
@@ -61,7 +64,7 @@ pub trait ExtensionTable: BaseTableTrait<XWord> + Sync {
                     origin_table_name: self.name(),
                     origin_index: i,
                     origin_air_degree: air.degree(),
-                    origin_table_height: self.padded_height(),
+                    origin_table_height: shared_padded_height,
                     origin_constraint_type: "transition constraint".to_string(),
                 }
             })
@@ -79,7 +82,7 @@ pub trait ExtensionTable: BaseTableTrait<XWord> + Sync {
                     origin_table_name: self.name(),
                     origin_index: i,
                     origin_air_degree: air.degree(),
-                    origin_table_height: self.padded_height(),
+                    origin_table_height: shared_padded_height,
                     origin_constraint_type: "consistency constraint".to_string(),
                 }
             })
@@ -97,7 +100,7 @@ pub trait ExtensionTable: BaseTableTrait<XWord> + Sync {
                     origin_table_name: self.name(),
                     origin_index: i,
                     origin_air_degree: air.degree(),
-                    origin_table_height: self.padded_height(),
+                    origin_table_height: shared_padded_height,
                     origin_constraint_type: "terminal constraint".to_string(),
                 }
             })
@@ -138,97 +141,89 @@ pub trait ExtensionTable: BaseTableTrait<XWord> + Sync {
     }
 
     fn get_boundary_quotient_degree_bounds(&self) -> Vec<Degree> {
-        if let Some(db) = &self.to_base().boundary_quotient_degree_bounds {
-            db.to_owned()
-        } else {
-            panic!(
-                "{} does not have boundary quotient degree bounds!",
-                &self.name()
-            );
-        }
+        self.to_base()
+            .boundary_quotient_degree_bounds
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} does not have boundary quotient degree bounds!",
+                    &self.name()
+                )
+            })
     }
 
     fn get_transition_quotient_degree_bounds(&self) -> Vec<Degree> {
-        if let Some(db) = &self.to_base().transition_quotient_degree_bounds {
-            db.to_owned()
-        } else {
-            panic!(
-                "{} does not have transition quotient degree bounds!",
-                &self.name()
-            );
-        }
+        self.to_base()
+            .transition_quotient_degree_bounds
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} does not have transition quotient degree bounds!",
+                    &self.name()
+                )
+            })
     }
 
     fn get_consistency_quotient_degree_bounds(&self) -> Vec<Degree> {
-        if let Some(db) = &self.to_base().consistency_quotient_degree_bounds {
-            db.to_owned()
-        } else {
-            panic!(
-                "{} does not have consistency quotient degree bounds!",
-                &self.name()
-            );
-        }
+        self.to_base()
+            .consistency_quotient_degree_bounds
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} does not have consistency quotient degree bounds!",
+                    &self.name()
+                )
+            })
     }
 
     fn get_terminal_quotient_degree_bounds(&self) -> Vec<Degree> {
-        if let Some(db) = &self.to_base().terminal_quotient_degree_bounds {
-            db.to_owned()
-        } else {
-            panic!(
-                "{} does not have terminal quotient degree bounds!",
-                &self.name()
-            );
-        }
+        self.to_base()
+            .terminal_quotient_degree_bounds
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} does not have terminal quotient degree bounds!",
+                    &self.name()
+                )
+            })
     }
 }
 
 pub trait Evaluable: ExtensionTable {
     /// evaluate boundary constraints on given point if they are set; panic otherwise
     fn evaluate_boundary_constraints(&self, evaluation_point: &[XWord]) -> Vec<XWord> {
-        if let Some(boundary_constraints) = &self.to_base().boundary_constraints {
-            boundary_constraints
-                .iter()
-                .map(|bc| bc.evaluate(evaluation_point))
-                .collect()
-        } else {
-            panic!("{} does not have boundary constraints!", &self.name());
-        }
+        self.to_base()
+            .boundary_constraints
+            .unwrap_or_else(|| panic!("{} does not have boundary constraints!", &self.name()))
+            .iter()
+            .map(|bc| bc.evaluate(evaluation_point))
+            .collect()
     }
 
     /// evaluate transition constraints if they are set; panic otherwise
     fn evaluate_transition_constraints(&self, evaluation_point: &[XWord]) -> Vec<XWord> {
-        if let Some(transition_constraints) = &self.to_base().transition_constraints {
-            transition_constraints
-                .iter()
-                .map(|tc| tc.evaluate(evaluation_point))
-                .collect()
-        } else {
-            panic!("{} does not have transition constraints!", &self.name());
-        }
+        self.to_base()
+            .transition_constraints
+            .unwrap_or_else(|| panic!("{} does not have transition constraints!", &self.name()))
+            .iter()
+            .map(|tc| tc.evaluate(evaluation_point))
+            .collect()
     }
 
     /// evaluate consistency constraints on given point if they are set; panic otherwise
     fn evaluate_consistency_constraints(&self, evaluation_point: &[XWord]) -> Vec<XWord> {
-        if let Some(consistency_constraints) = &self.to_base().consistency_constraints {
-            consistency_constraints
-                .iter()
-                .map(|cc| cc.evaluate(evaluation_point))
-                .collect()
-        } else {
-            panic!("{} does not have consistency constraints!", &self.name());
-        }
+        self.to_base()
+            .consistency_constraints
+            .unwrap_or_else(|| panic!("{} does not have consistency constraints!", &self.name()))
+            .iter()
+            .map(|cc| cc.evaluate(evaluation_point))
+            .collect()
     }
 
     /// evaluate terminal constraints on given point if they are set; panic otherwise
     fn evaluate_terminal_constraints(&self, evaluation_point: &[XWord]) -> Vec<XWord> {
-        if let Some(terminal_constraints) = &self.to_base().terminal_constraints {
-            terminal_constraints
-                .iter()
-                .map(|termc| termc.evaluate(evaluation_point))
-                .collect()
-        } else {
-            panic!("{} does not have terminal constraints!", &self.name());
-        }
+        self.to_base()
+            .terminal_constraints
+            .unwrap_or_else(|| panic!("{} does not have terminal constraints!", &self.name()))
+            .iter()
+            .map(|termc| termc.evaluate(evaluation_point))
+            .collect()
     }
 }
 
@@ -236,6 +231,7 @@ pub trait Quotientable: ExtensionTable + Evaluable {
     fn boundary_quotients(
         &self,
         fri_domain: &FriDomain<XWord>,
+        shared_padded_height: usize,
         codewords: &[Vec<XWord>],
     ) -> Vec<Vec<XWord>> {
         for codeword in codewords.iter() {
@@ -248,7 +244,7 @@ pub trait Quotientable: ExtensionTable + Evaluable {
             .map(|x| x - XFieldElement::ring_one())
             .collect();
 
-        let zerofier_inverse = if self.padded_height() == 0 {
+        let zerofier_inverse = if shared_padded_height == 0 {
             zerofier_codeword
         } else {
             XWord::batch_inversion(zerofier_codeword)
@@ -275,15 +271,17 @@ pub trait Quotientable: ExtensionTable + Evaluable {
     fn transition_quotients(
         &self,
         fri_domain: &FriDomain<XWord>,
+        omicron_inverse: XWord,
+        shared_padded_height: usize,
         codewords: &[Vec<XWord>],
+        unit_distance: usize,
     ) -> Vec<Vec<XFieldElement>> {
         for codeword in codewords.iter() {
             debug_assert_eq!(fri_domain.length, codeword.len());
         }
 
         let one = XWord::ring_one();
-        let height = self.padded_height() as u32;
-        let omicron_inverse = self.omicron().inverse();
+        let height = shared_padded_height as u32;
         let fri_domain_values = fri_domain.domain_values();
 
         let subgroup_zerofier: Vec<_> = fri_domain_values
@@ -300,7 +298,6 @@ pub trait Quotientable: ExtensionTable + Evaluable {
             .zip_eq(subgroup_zerofier_inverse.into_par_iter())
             .map(|(fri_dom_v, sub_z_inv)| (fri_dom_v - omicron_inverse) * sub_z_inv)
             .collect();
-        let unit_distance = self.unit_distance(fri_domain.length);
 
         let transposed_quotient_codewords: Vec<_> = zerofier_inverse
             .par_iter()
@@ -329,19 +326,24 @@ pub trait Quotientable: ExtensionTable + Evaluable {
     fn consistency_quotients(
         &self,
         fri_domain: &FriDomain<XWord>,
+        shared_padded_height: usize,
         codewords: &[Vec<XWord>],
     ) -> Vec<Vec<XWord>> {
         for codeword in codewords.iter() {
             debug_assert_eq!(fri_domain.length, codeword.len());
         }
 
+        let one = XWord::ring_one();
+        let height = shared_padded_height as u32;
+        let fri_domain_values = fri_domain.domain_values();
+
         let zerofier_codeword = fri_domain
             .domain_values()
             .iter()
-            .map(|x| x.mod_pow_u32(self.padded_height() as u32) - XWord::ring_one())
+            .map(|x| x.mod_pow_u32(height) - one)
             .collect();
 
-        let zerofier_inverse = if self.padded_height() == 0 {
+        let zerofier_inverse = if shared_padded_height == 0 {
             zerofier_codeword
         } else {
             XWord::batch_inversion(zerofier_codeword)
@@ -368,6 +370,8 @@ pub trait Quotientable: ExtensionTable + Evaluable {
     fn terminal_quotients(
         &self,
         fri_domain: &FriDomain<XWord>,
+        omicron_inverse: XWord,
+        shared_padded_height: usize,
         codewords: &[Vec<XWord>],
     ) -> Vec<Vec<XWord>> {
         for codeword in codewords.iter() {
@@ -379,10 +383,10 @@ pub trait Quotientable: ExtensionTable + Evaluable {
         let zerofier_codeword = fri_domain
             .domain_values()
             .into_iter()
-            .map(|x| x - self.omicron().inverse())
+            .map(|x| x - omicron_inverse)
             .collect_vec();
 
-        let zerofier_inverse = if self.padded_height() == 0 {
+        let zerofier_inverse = if shared_padded_height == 0 {
             zerofier_codeword
         } else {
             XWord::batch_inversion(zerofier_codeword)
@@ -409,21 +413,33 @@ pub trait Quotientable: ExtensionTable + Evaluable {
     fn all_quotients(
         &self,
         fri_domain: &FriDomain<XWord>,
+        omicron_inverse: XWord,
+        shared_padded_height: usize,
         codewords: &[Vec<XWord>],
+        unit_distance: usize,
     ) -> Vec<Vec<XWord>> {
         let mut timer = TimingReporter::start();
         timer.elapsed(&format!("Table name: {}", self.name()));
 
-        let boundary_quotients = self.boundary_quotients(fri_domain, codewords);
+        let boundary_quotients =
+            self.boundary_quotients(fri_domain, shared_padded_height, codewords);
         timer.elapsed("boundary quotients");
 
-        let transition_quotients = self.transition_quotients(fri_domain, codewords);
+        let transition_quotients = self.transition_quotients(
+            fri_domain,
+            omicron_inverse,
+            shared_padded_height,
+            codewords,
+            unit_distance,
+        );
         timer.elapsed("transition quotients");
 
-        let consistency_quotients = self.consistency_quotients(fri_domain, codewords);
+        let consistency_quotients =
+            self.consistency_quotients(fri_domain, shared_padded_height, codewords);
         timer.elapsed("Done calculating consistency quotients");
 
-        let terminal_quotients = self.terminal_quotients(fri_domain, codewords);
+        let terminal_quotients =
+            self.terminal_quotients(fri_domain, omicron_inverse, shared_padded_height, codewords);
         timer.elapsed("terminal quotients");
 
         println!("{}", timer.finish());

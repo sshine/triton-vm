@@ -26,7 +26,7 @@ pub const FULL_WIDTH: usize = 21; // BASE_WIDTH + 2 * INITIALS_COUNT
 type BWord = BFieldElement;
 type XWord = XFieldElement;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct HashTable {
     base: BaseTable<BWord>,
 }
@@ -144,27 +144,26 @@ impl ExtHashTable {
 }
 
 impl HashTable {
-    pub fn new_prover(num_trace_randomizers: usize, matrix: Vec<Vec<BWord>>) -> Self {
-        let unpadded_height = matrix.len();
-        let padded_height = base_table::pad_height(unpadded_height);
-
-        let omicron = base_table::derive_omicron(padded_height as u64);
-        let base = BaseTable::new(
-            BASE_WIDTH,
-            FULL_WIDTH,
-            padded_height,
-            num_trace_randomizers,
-            omicron,
-            matrix,
-            "HashTable".to_string(),
-        );
-
+    pub fn new_prover(matrix: Vec<Vec<BWord>>) -> Self {
+        let base = BaseTable::new(BASE_WIDTH, FULL_WIDTH, matrix, "HashTable".to_string());
         Self { base }
     }
 
-    pub fn codeword_table(&self, fri_domain: &FriDomain<BWord>) -> Self {
+    pub fn codeword_table(
+        &self,
+        fri_domain: &FriDomain<BWord>,
+        omicron: BWord,
+        shared_padded_height: usize,
+        num_trace_randomizers: usize,
+    ) -> Self {
         let base_columns = 0..self.base_width();
-        let codewords = self.low_degree_extension(fri_domain, base_columns);
+        let codewords = self.low_degree_extension(
+            fri_domain,
+            omicron,
+            shared_padded_height,
+            num_trace_randomizers,
+            base_columns,
+        );
 
         let base = self.base.with_data(codewords);
         Self { base }
@@ -174,6 +173,7 @@ impl HashTable {
         &self,
         challenges: &HashTableChallenges,
         initials: &HashTableEndpoints,
+        num_trace_randomizers: usize,
     ) -> (ExtHashTable, HashTableEndpoints) {
         let mut from_processor_running_sum = initials.from_processor_eval_sum;
         let mut to_processor_running_sum = initials.to_processor_eval_sum;
@@ -245,9 +245,12 @@ impl HashTable {
             to_processor_eval_sum: to_processor_running_sum,
         };
 
-        let base = self.base.with_lifted_data(extension_matrix);
+        let base = self
+            .base
+            .with_lifted_data(extension_matrix, num_trace_randomizers);
         let table = BaseTable::extension(
             base,
+            interpolant_degree,
             ExtHashTable::ext_boundary_constraints(),
             ExtHashTable::ext_transition_constraints(challenges),
             ExtHashTable::ext_consistency_constraints(),
@@ -261,17 +264,7 @@ impl HashTable {
 impl ExtHashTable {
     pub fn with_padded_height(num_trace_randomizers: usize, padded_height: usize) -> Self {
         let matrix: Vec<Vec<XWord>> = vec![];
-
-        let omicron = base_table::derive_omicron(padded_height as u64);
-        let base = BaseTable::new(
-            BASE_WIDTH,
-            FULL_WIDTH,
-            padded_height,
-            num_trace_randomizers,
-            omicron,
-            matrix,
-            "ExtHashTable".to_string(),
-        );
+        let base = BaseTable::new(BASE_WIDTH, FULL_WIDTH, matrix, "ExtHashTable".to_string());
 
         Self { base }
     }
@@ -279,10 +272,21 @@ impl ExtHashTable {
     pub fn ext_codeword_table(
         &self,
         fri_domain: &FriDomain<XWord>,
+        omicron: XWord,
+        shared_padded_height: usize,
         base_codewords: &[Vec<BWord>],
     ) -> Self {
+        // Extension Tables do not have a randomized trace
+        let num_trace_randomizers = 0;
+
         let ext_columns = self.base_width()..self.full_width();
-        let ext_codewords = self.low_degree_extension(fri_domain, ext_columns);
+        let ext_codewords = self.low_degree_extension(
+            fri_domain,
+            omicron,
+            shared_padded_height,
+            num_trace_randomizers,
+            ext_columns,
+        );
 
         let lifted_base_codewords = base_codewords
             .iter()
@@ -297,22 +301,14 @@ impl ExtHashTable {
 
     pub fn for_verifier(
         num_trace_randomizers: usize,
-        padded_height: usize,
+        shared_padded_height: usize,
         all_challenges: &AllChallenges,
         all_terminals: &AllEndpoints,
     ) -> Self {
-        let omicron = base_table::derive_omicron(padded_height as u64);
-        let base = BaseTable::new(
-            BASE_WIDTH,
-            FULL_WIDTH,
-            padded_height,
-            num_trace_randomizers,
-            omicron,
-            vec![],
-            "ExtHashTable".to_string(),
-        );
+        let base = BaseTable::new(BASE_WIDTH, FULL_WIDTH, vec![], "ExtHashTable".to_string());
         let table = BaseTable::extension(
             base,
+            interpolant_degree,
             ExtHashTable::ext_boundary_constraints(),
             ExtHashTable::ext_transition_constraints(&all_challenges.hash_table_challenges),
             ExtHashTable::ext_consistency_constraints(),

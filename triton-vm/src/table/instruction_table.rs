@@ -24,7 +24,7 @@ pub const FULL_WIDTH: usize = 7; // BASE_WIDTH + 2 * INITIALS_COUNT
 type BWord = BFieldElement;
 type XWord = XFieldElement;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InstructionTable {
     base: BaseTable<BWord>,
 }

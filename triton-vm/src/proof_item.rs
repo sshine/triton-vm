@@ -27,7 +27,7 @@ pub enum Item {
     RevealedCombinationElements(Vec<XFieldElement>),
     FriCodeword(Vec<XFieldElement>),
     FriProof(FriProof),
-    PaddedHeights(Vec<BFieldElement>),
+    SharedPaddedHeight(BFieldElement),
 }
 
 impl Item {
@@ -155,11 +155,11 @@ impl Item {
         }
     }
 
-    pub fn as_padded_heights(&self) -> Result<Vec<BFieldElement>, Box<dyn std::error::Error>> {
+    pub fn as_shared_padded_height(&self) -> Result<BFieldElement, Box<dyn std::error::Error>> {
         match self {
-            Self::PaddedHeights(padded_heights) => Ok(padded_heights.to_owned()),
+            Self::SharedPaddedHeight(shared_padded_height) => Ok(*shared_padded_height),
             _ => Err(ProofStreamError::boxed(
-                "expected padded table heights, but got something else",
+                "expected shared, padded table height, but got something else",
             )),
         }
     }
@@ -209,7 +209,9 @@ impl IntoIterator for Item {
                 .map(|xs| xs_to_bs(&xs).collect::<Vec<_>>())
                 .concat()
                 .into_iter(),
-            Item::PaddedHeights(padded_heights) => padded_heights.into_iter(),
+            Item::SharedPaddedHeight(shared_padded_height) => {
+                vec![shared_padded_height].into_iter()
+            }
         }
     }
 }

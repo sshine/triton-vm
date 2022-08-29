@@ -76,10 +76,7 @@ impl Stark {
         );
 
         let num_trace_randomizers = Self::num_trace_randomizers(security_level);
-        let empty_table_collection = ExtTableCollection::with_padded_heights(
-            num_trace_randomizers,
-            &[max_height; NUM_TABLES],
-        );
+        let empty_table_collection = ExtTableCollection::with_padded_height(max_height);
 
         let max_degree_with_origin = empty_table_collection.max_degree_with_origin();
         let max_degree = (other::roundup_npo2(max_degree_with_origin.degree as u64) - 1) as i64;
@@ -161,11 +158,8 @@ impl Stark {
             ExtTableCollection::extend_tables(&base_tables, &extension_challenges, &all_initials);
         timer.elapsed("extend + get_terminals");
 
-        let padded_heights = (&ext_tables)
-            .into_iter()
-            .map(|ext_table| BWord::new(ext_table.padded_height() as u64))
-            .collect_vec();
-        proof_stream.enqueue(&Item::PaddedHeights(padded_heights));
+        let shared_padded_height = BWord::new(ext_tables.padded_height as u64);
+        proof_stream.enqueue(&Item::SharedPaddedHeight(shared_padded_height));
         timer.elapsed("Sent all padded heights");
 
         let ext_codeword_tables =
@@ -259,7 +253,7 @@ impl Stark {
         }
         timer.elapsed("fri.prove");
 
-        let unit_distances = self.get_unit_distances(&ext_tables);
+        let unit_distances = vec![0, (&ext_tables).unit_distance(self.xfri.domain.length)];
         timer.elapsed("unit_distances");
 
         // Open leafs of zipped codewords at indicated positions
@@ -321,18 +315,6 @@ impl Stark {
         revealed_indices.sort_unstable();
         revealed_indices.dedup();
         revealed_indices
-    }
-
-    // FIXME: `padded_heights` could be `&[usize; NUM_TABLES]` (but that const doesn't exist yet)
-    fn get_unit_distances(&self, ext_tables: &ExtTableCollection) -> Vec<usize> {
-        let mut unit_distances = ext_tables
-            .into_iter()
-            .map(|table| table.unit_distance(self.xfri.domain.length))
-            .collect_vec();
-        unit_distances.push(0);
-        unit_distances.sort_unstable();
-        unit_distances.dedup();
-        unit_distances
     }
 
     fn get_revealed_elements<PF: PrimeField>(
@@ -609,23 +591,22 @@ impl Stark {
         let extension_challenges = AllChallenges::create_challenges(extension_challenge_weights);
         timer.elapsed("Create extension challenges");
 
-        let padded_heights = proof_stream
-            .dequeue()?
-            .as_padded_heights()?
-            .iter()
-            .map(|bfe| bfe.value() as usize)
-            .collect_vec();
-        timer.elapsed("Got all padded heights");
+        let shared_padded_height =
+            proof_stream.dequeue()?.as_shared_padded_height()?.value() as usize;
+        timer.elapsed("Got shared padded height");
 
         let extension_tree_merkle_root = proof_stream.dequeue()?.as_merkle_root()?;
         let all_terminals = proof_stream.dequeue()?.as_terminals()?;
         timer.elapsed("Get extension tree's root & terminals from proof stream");
 
-        let ext_table_collection =
-            // ExtTableCollection::with_padded_heights(self.num_trace_randomizers, &padded_heights);
-            ExtTableCollection::for_verifier(self.num_trace_randomizers, &padded_heights, &extension_challenges, &all_terminals);
+        let ext_table_collection = ExtTableCollection::for_verifier(
+            self.num_trace_randomizers,
+            &shared_padded_height,
+            &extension_challenges,
+            &all_terminals,
+        );
 
-        let base_degree_bounds: Vec<Degree> = ext_table_collection.get_all_base_degree_bounds();
+        let base_degree_bounds: Vec<Degree> = ext_table_collection.get_base_column_degree_bounds();
         timer.elapsed("Calculated base degree bounds");
 
         let extension_degree_bounds = ext_table_collection.get_extension_degree_bounds();
@@ -665,7 +646,10 @@ impl Stark {
         self.xfri.verify(proof_stream, &combination_root)?;
         timer.elapsed("Verified FRI proof");
 
-        let unit_distances = self.get_unit_distances(&ext_table_collection);
+        let unit_distances = vec![
+            0,
+            ext_table_collection.unit_distance(self.xfri.domain.length),
+        ];
         timer.elapsed("Got unit distances");
 
         // Open leafs of zipped codewords at indicated positions
@@ -774,6 +758,10 @@ impl Stark {
         let base_offset = self.num_randomizer_polynomials;
         let ext_offset = base_offset + num_base_polynomials;
         let final_offset = ext_offset + num_extension_polynomials;
+        let unit_distance = ext_table_collection.unit_distance(self.xfri.domain.length);
+        let omicron_inverse = ext_table_collection.omicron.inverse();
+        let interpolant_degree = ext_table_collection.interpolant_degree();
+
         for (combination_check_index, revealed_combination_leaf) in combination_check_indices
             .into_iter()
             .zip_eq(revealed_combination_leafs)
@@ -842,8 +830,6 @@ impl Stark {
                 .zip_eq(next_cross_slice_by_table.iter())
                 .zip_eq(ext_table_collection.into_iter())
             {
-                let table_height = table.padded_height() as u32;
-
                 for (evaluated_bc, degree_bound) in table
                     .evaluate_boundary_constraints(table_row)
                     .into_iter()
@@ -864,13 +850,15 @@ impl Stark {
                     .zip_eq(table.get_transition_quotient_degree_bounds().iter())
                 {
                     let shift = self.max_degree - degree_bound;
-                    let quotient = if table_height == 0 {
+                    let quotient = if shared_padded_height == 0 {
                         // transition has no meaning on empty table
                         0.into()
                     } else {
-                        let numerator = current_fri_domain_value - table.omicron().inverse();
-                        let denominator =
-                            current_fri_domain_value.mod_pow_u32(table_height) - 1.into();
+                        let numerator = current_fri_domain_value - omicron_inverse;
+                        let denominator = current_fri_domain_value
+                            .mod_pow_u32(shared_padded_height as u32)
+                            - 1.into();
+
                         evaluated_tc * numerator / denominator
                     };
                     let quotient_shifted =
@@ -886,7 +874,8 @@ impl Stark {
                 {
                     let shift = self.max_degree - degree_bound;
                     let quotient = evaluated_cc
-                        / (current_fri_domain_value.mod_pow_u32(table_height) - 1.into());
+                        / (current_fri_domain_value.mod_pow_u32(shared_padded_height as u32)
+                            - 1.into());
                     let quotient_shifted =
                         quotient * current_fri_domain_value.mod_pow_u32(shift as u32);
                     summands.push(quotient);
@@ -899,8 +888,7 @@ impl Stark {
                     .zip_eq(table.get_terminal_quotient_degree_bounds().iter())
                 {
                     let shift = self.max_degree - degree_bound;
-                    let quotient =
-                        evaluated_termc / (current_fri_domain_value - table.omicron().inverse());
+                    let quotient = evaluated_termc / (current_fri_domain_value - omicron_inverse);
                     let quotient_shifted =
                         quotient * current_fri_domain_value.mod_pow_u32(shift as u32);
                     summands.push(quotient);
@@ -911,8 +899,10 @@ impl Stark {
             for arg in PermArg::all_permutation_arguments().iter() {
                 let perm_arg_deg_bound = arg.quotient_degree_bound(&ext_table_collection);
                 let shift = self.max_degree - perm_arg_deg_bound;
-                let quotient = arg.evaluate_difference(&cross_slice_by_table)
-                    / (current_fri_domain_value - 1.into());
+                let perm_arg_zerofier = current_fri_domain_value - 1.into();
+
+                // this quotient checks that the initials are the same.
+                let quotient = arg.evaluate_difference(&cross_slice_by_table) / perm_arg_zerofier;
                 let quotient_shifted =
                     quotient * current_fri_domain_value.mod_pow_u32(shift as u32);
                 summands.push(quotient);
@@ -1019,27 +1009,16 @@ pub(crate) mod triton_stark_tests {
     ) -> (Stark, ProofStream<Item, RescuePrimeXlix<RP_DEFAULT_WIDTH>>) {
         let (base_matrices, _) = parse_simulate(code, input_symbols, &[]);
 
+        let num_trace_randomizers = 2;
         let num_randomizer_polynomials = 1;
         let log_expansion_factor = 2;
         let security_level = 32;
 
-        let unpadded_height = [
-            base_matrices.program_matrix.len(),
-            base_matrices.processor_matrix.len(),
-            base_matrices.instruction_matrix.len(),
-            base_matrices.op_stack_matrix.len(),
-            base_matrices.ram_matrix.len(),
-            base_matrices.jump_stack_matrix.len(),
-            base_matrices.hash_matrix.len(),
-            base_matrices.u32_op_matrix.len(),
-        ]
-        .into_iter()
-        .max()
-        .unwrap_or(0);
-        let padded_height = base_table::pad_height(unpadded_height);
+        let table_collection =
+            BaseTableCollection::from_base_matrices(num_trace_randomizers, &base_matrices);
 
         let stark = Stark::new(
-            padded_height,
+            table_collection.shared_padded_height,
             num_randomizer_polynomials,
             log_expansion_factor,
             security_level,

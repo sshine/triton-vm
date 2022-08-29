@@ -38,6 +38,9 @@ pub struct BaseTableCollection {
 
 #[derive(Debug, Clone)]
 pub struct ExtTableCollection {
+    pub padded_height: usize,
+    pub omicron: XWord,
+
     pub program_table: ExtProgramTable,
     pub instruction_table: ExtInstructionTable,
     pub processor_table: ExtProcessorTable,
@@ -182,41 +185,20 @@ impl<'a> IntoIterator for &'a BaseTableCollection {
 }
 
 impl ExtTableCollection {
-    pub fn with_padded_heights(num_trace_randomizers: usize, padded_heights: &[usize]) -> Self {
-        // FIXME there must be a better way to access the padded heights
-        let ext_program_table =
-            ExtProgramTable::with_padded_height(num_trace_randomizers, padded_heights[0]);
-
-        let ext_instruction_table =
-            ExtInstructionTable::with_padded_height(num_trace_randomizers, padded_heights[1]);
-
-        let ext_processor_table =
-            ExtProcessorTable::with_padded_height(num_trace_randomizers, padded_heights[2]);
-
-        let ext_op_stack_table =
-            ExtOpStackTable::with_padded_height(num_trace_randomizers, padded_heights[3]);
-
-        let ext_ram_table =
-            ExtRamTable::with_padded_height(num_trace_randomizers, padded_heights[4]);
-
-        let ext_jump_stack_table =
-            ExtJumpStackTable::with_padded_height(num_trace_randomizers, padded_heights[5]);
-
-        let ext_hash_table =
-            ExtHashTable::with_padded_height(num_trace_randomizers, padded_heights[6]);
-
-        let ext_u32_op_table =
-            ExtU32OpTable::with_padded_height(num_trace_randomizers, padded_heights[7]);
+    pub fn with_padded_height(padded_height: usize) -> Self {
+        let dummy_omicron = XFieldElement::new_const(1u32.into());
 
         ExtTableCollection {
-            program_table: ext_program_table,
-            instruction_table: ext_instruction_table,
-            processor_table: ext_processor_table,
-            op_stack_table: ext_op_stack_table,
-            ram_table: ext_ram_table,
-            jump_stack_table: ext_jump_stack_table,
-            hash_table: ext_hash_table,
-            u32_op_table: ext_u32_op_table,
+            omicron: dummy_omicron,
+            padded_height,
+            program_table: Default::default(),
+            instruction_table: Default::default(),
+            processor_table: Default::default(),
+            op_stack_table: Default::default(),
+            ram_table: Default::default(),
+            jump_stack_table: Default::default(),
+            hash_table: Default::default(),
+            u32_op_table: Default::default(),
         }
     }
 
@@ -451,22 +433,11 @@ impl ExtTableCollection {
         }
     }
 
-    pub fn interpolant_degree(&self, table_id: TableId) -> Degree {
-        use TableId::*;
-
-        match table_id {
-            ProgramTable => self.program_table.interpolant_degree(),
-            InstructionTable => self.instruction_table.interpolant_degree(),
-            ProcessorTable => self.processor_table.interpolant_degree(),
-            OpStackTable => self.op_stack_table.interpolant_degree(),
-            RamTable => self.ram_table.interpolant_degree(),
-            JumpStackTable => self.jump_stack_table.interpolant_degree(),
-            HashTable => self.hash_table.interpolant_degree(),
-            U32OpTable => self.u32_op_table.interpolant_degree(),
-        }
+    pub fn interpolant_degree(&self) -> Degree {
+        (self.padded_height - 1) as Degree
     }
 
-    pub fn get_all_base_degree_bounds(&self) -> Vec<i64> {
+    pub fn get_base_column_degree_bounds(&self) -> Vec<i64> {
         self.into_iter()
             .map(|table| vec![table.interpolant_degree(); table.base_width()])
             .concat()
@@ -540,7 +511,7 @@ mod table_collection_tests {
         let num_trace_randomizers = 2;
         let max_padded_height = 1;
 
-        ExtTableCollection::with_padded_heights(
+        ExtTableCollection::with_padded_height(
             num_trace_randomizers,
             &[max_padded_height; NUM_TABLES],
         )

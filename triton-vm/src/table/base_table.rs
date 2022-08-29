@@ -4,7 +4,7 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::ops::Range;
 use twenty_first::shared_math::b_field_element::BFieldElement;
 use twenty_first::shared_math::mpolynomial::{Degree, MPolynomial};
-use twenty_first::shared_math::other::{is_power_of_two, roundup_npo2};
+// use twenty_first::shared_math::other::{is_power_of_two, roundup_npo2};
 use twenty_first::shared_math::polynomial::Polynomial;
 use twenty_first::shared_math::traits::{GetRandomElements, PrimeField};
 use twenty_first::shared_math::x_field_element::XFieldElement;
@@ -12,22 +12,13 @@ use twenty_first::shared_math::x_field_element::XFieldElement;
 type BWord = BFieldElement;
 type XWord = XFieldElement;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BaseTable<FieldElement: PrimeField> {
     /// The width of each `data` row in the base version of the table
     base_width: usize,
 
     /// The width of each `data` row in the extended version of the table
     full_width: usize,
-
-    /// The number of `data` rows after padding
-    padded_height: usize,
-
-    /// The number of random rows added for each row in the execution trace.
-    num_trace_randomizers: usize,
-
-    /// The generator of the ο-domain, which is used to interpolate the trace data.
-    omicron: FieldElement,
 
     /// The table data (trace data). Represents every intermediate
     matrix: Vec<Vec<FieldElement>>,
@@ -53,18 +44,12 @@ impl<DataPF: PrimeField> BaseTable<DataPF> {
     pub fn new(
         base_width: usize,
         full_width: usize,
-        padded_height: usize,
-        num_trace_randomizers: usize,
-        omicron: DataPF,
         matrix: Vec<Vec<DataPF>>,
         name: String,
     ) -> Self {
         BaseTable {
             base_width,
             full_width,
-            padded_height,
-            num_trace_randomizers,
-            omicron,
             matrix,
             name,
             boundary_constraints: None,
@@ -77,42 +62,40 @@ impl<DataPF: PrimeField> BaseTable<DataPF> {
             terminal_quotient_degree_bounds: None,
         }
     }
+
     pub fn extension(
         base_table: BaseTable<DataPF>,
+        interpolant_degree: Degree,
         boundary_constraints: Vec<MPolynomial<DataPF>>,
         transition_constraints: Vec<MPolynomial<DataPF>>,
         consistency_constraints: Vec<MPolynomial<DataPF>>,
         terminal_constraints: Vec<MPolynomial<DataPF>>,
     ) -> Self {
-        let interpolant_degree = base_table.interpolant_degree();
         let full_width = base_table.full_width;
 
-        let bqdb =
+        let boundary_quotient_degree_bounds =
             Self::compute_degree_bounds(&boundary_constraints, interpolant_degree, full_width);
-        let tqdb = Self::compute_degree_bounds(
+        let transition_quotient_degree_bounds = Self::compute_degree_bounds(
             &transition_constraints,
             interpolant_degree,
             2 * full_width,
         );
-        let cqdb =
+        let consistency_quotient_degree_bounds =
             Self::compute_degree_bounds(&consistency_constraints, interpolant_degree, full_width);
-        let termqdb =
+        let terminal_quotient_degree_bounds =
             Self::compute_degree_bounds(&terminal_constraints, interpolant_degree, full_width);
+
         BaseTable {
             boundary_constraints: Some(boundary_constraints),
             transition_constraints: Some(transition_constraints),
             consistency_constraints: Some(consistency_constraints),
             terminal_constraints: Some(terminal_constraints),
-            boundary_quotient_degree_bounds: Some(bqdb),
-            transition_quotient_degree_bounds: Some(tqdb),
-            consistency_quotient_degree_bounds: Some(cqdb),
-            terminal_quotient_degree_bounds: Some(termqdb),
+            boundary_quotient_degree_bounds: Some(boundary_quotient_degree_bounds),
+            transition_quotient_degree_bounds: Some(transition_quotient_degree_bounds),
+            consistency_quotient_degree_bounds: Some(consistency_quotient_degree_bounds),
+            terminal_quotient_degree_bounds: Some(terminal_quotient_degree_bounds),
             ..base_table
         }
-    }
-
-    fn interpolant_degree(&self) -> Degree {
-        (self.padded_height + self.num_trace_randomizers - 1) as Degree
     }
 
     /// Computes the degree bounds of the quotients given the AIR constraints and the interpolant
@@ -142,13 +125,14 @@ impl<DataPF: PrimeField> BaseTable<DataPF> {
 /// Create a `BaseTable<XWord` from a `BaseTable<BWord>` with the same parameters lifted from the
 /// B-Field into the X-Field (where applicable), but new `matrix` data.
 impl BaseTable<BWord> {
-    pub fn with_lifted_data(&self, matrix: Vec<Vec<XWord>>) -> BaseTable<XWord> {
+    pub fn with_lifted_data(
+        &self,
+        matrix: Vec<Vec<XWord>>,
+        num_trace_randomizers: usize,
+    ) -> BaseTable<XWord> {
         BaseTable::new(
             self.base_width,
             self.full_width,
-            self.padded_height,
-            self.num_trace_randomizers,
-            self.omicron.lift(),
             matrix,
             format!("{} with lifted data", self.name),
         )
@@ -167,48 +151,12 @@ pub trait HasBaseTable<DataPF: PrimeField> {
         self.to_base().full_width
     }
 
-    fn padded_height(&self) -> usize {
-        self.to_base().padded_height
-    }
-
-    fn num_trace_randomizers(&self) -> usize {
-        self.to_base().num_trace_randomizers
-    }
-
-    fn interpolant_degree(&self) -> Degree {
-        self.to_base().interpolant_degree()
-    }
-
-    fn omicron(&self) -> DataPF {
-        self.to_base().omicron
-    }
-
     fn data(&self) -> &Vec<Vec<DataPF>> {
         &self.to_base().matrix
     }
 
     fn mut_data(&mut self) -> &mut Vec<Vec<DataPF>> {
         &mut self.to_mut_base().matrix
-    }
-}
-
-pub fn derive_omicron<DataPF: PrimeField>(padded_height: u64) -> DataPF {
-    debug_assert!(
-        0 == padded_height || is_power_of_two(padded_height),
-        "The padded height was: {}",
-        padded_height
-    );
-    DataPF::default()
-        .get_primitive_root_of_unity(padded_height)
-        .0
-        .unwrap()
-}
-
-pub fn pad_height(height: usize) -> usize {
-    if height == 0 {
-        0
-    } else {
-        roundup_npo2(height as u64) as usize
     }
 }
 
@@ -241,32 +189,35 @@ where
         self.to_base().name.clone()
     }
 
-    fn pad(&mut self) {
-        while self.data().len() != pad_height(self.data().len()) {
+    /// Add padding to a table so that its height becomes the same as other tables.
+    ///
+    /// Use table-specific padding via `.get_padding_row()`.
+    fn pad(&mut self, shared_padded_height: usize) {
+        while self.data().len() != shared_padded_height {
             let padding_row = self.get_padding_row();
             self.mut_data().push(padding_row);
-        }
-    }
-
-    /// Returns the relation between the FRI domain and the omicron domain
-    fn unit_distance(&self, omega_order: usize) -> usize {
-        if self.padded_height() == 0 {
-            0
-        } else {
-            omega_order / self.padded_height()
         }
     }
 
     fn low_degree_extension(
         &self,
         fri_domain: &FriDomain<DataPF>,
+        omicron: DataPF,
+        shared_padded_height: usize,
+        num_trace_randomizers: usize,
         columns: Range<usize>,
     ) -> Vec<Vec<DataPF>> {
         // FIXME: Table<> supports Vec<[DataPF; WIDTH]>, but FriDomain does not (yet).
-        self.interpolate_columns(fri_domain.omega, fri_domain.length, columns)
-            .par_iter()
-            .map(|polynomial| fri_domain.evaluate(polynomial))
-            .collect()
+        self.interpolate_columns(
+            fri_domain,
+            omicron,
+            shared_padded_height,
+            num_trace_randomizers,
+            columns,
+        )
+        .par_iter()
+        .map(|polynomial| fri_domain.evaluate(polynomial))
+        .collect()
     }
 
     /// Return the interpolation of columns. The `column_indices` variable
@@ -274,8 +225,10 @@ where
     /// if it is called with a subset, it *will* fail.
     fn interpolate_columns(
         &self,
-        omega: DataPF,
-        omega_order: usize,
+        fri_domain: &FriDomain<DataPF>,
+        omicron: DataPF,
+        shared_padded_height: usize,
+        num_trace_randomizers: usize,
         columns: Range<usize>,
     ) -> Vec<Polynomial<DataPF>> {
         // FIXME: Inject `rng` instead.
@@ -283,23 +236,22 @@ where
 
         // Ensure that `matrix` is set and padded before running this function
         assert_eq!(
-            self.padded_height(),
+            shared_padded_height,
             self.data().len(),
             "{}: Table data must be padded before interpolation",
             self.name()
         );
 
-        if self.padded_height() == 0 {
+        if shared_padded_height == 0 {
             return vec![Polynomial::ring_zero(); columns.len()];
         }
 
         // FIXME: Unfold with multiplication instead of mapping with power.
-        let omicron_domain = (0..self.padded_height())
-            .map(|i| self.omicron().mod_pow_u32(i as u32))
+        let omicron_domain = (0..shared_padded_height)
+            .map(|i| omicron.mod_pow_u32(i as u32))
             .collect_vec();
 
-        let one = omega.ring_one();
-        let num_trace_randomizers = self.num_trace_randomizers();
+        let one = fri_domain.omega.ring_one();
         let randomizer_domain = disjoint_domain(num_trace_randomizers, &omicron_domain, one);
 
         let interpolation_domain = vec![omicron_domain, randomizer_domain].concat();
@@ -320,8 +272,13 @@ where
 
         all_randomized_traces
             .par_iter()
-            .map(|values| {
-                Polynomial::fast_interpolate(&interpolation_domain, values, &omega, omega_order)
+            .map(|randomized_trace| {
+                Polynomial::fast_interpolate(
+                    &interpolation_domain,
+                    randomized_trace,
+                    &fri_domain.omega,
+                    fri_domain.length,
+                )
             })
             .collect()
     }
@@ -329,19 +286,8 @@ where
 
 #[cfg(test)]
 mod test_base_table {
-    use crate::table::base_table::{disjoint_domain, pad_height};
+    use crate::table::base_table::disjoint_domain;
     use twenty_first::shared_math::b_field_element::BFieldElement;
-    use twenty_first::shared_math::other;
-
-    #[test]
-    fn pad_height_test() {
-        assert_eq!(0, pad_height(0));
-        for x in 1..=1025 {
-            let padded_x = pad_height(x);
-            assert_eq!(other::roundup_npo2(x as u64) as usize, padded_x);
-            assert_eq!(padded_x, pad_height(padded_x))
-        }
-    }
 
     #[test]
     fn disjoint_domain_test() {
